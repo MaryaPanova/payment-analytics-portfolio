@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+profiles.yml
+*.log
+.DS_Store
+
+# dbt artifacts (added in Phase 3)
+dbt_project/target/
+dbt_project/logs/
