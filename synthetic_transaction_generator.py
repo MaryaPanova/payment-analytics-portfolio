@@ -10,10 +10,12 @@ Usage:
     python synthetic_transaction_generator.py --backfill-hours 48
     python synthetic_transaction_generator.py                       # live loop only
 
-Edit PROJECT_ID and DATASET_ID below before running.
+Target table defaults to payment-analytics-portfolio.payments_synthetic.raw_transactions;
+override with the GCP_PROJECT_ID / BQ_DATASET_ID / BQ_TABLE_ID env vars.
 """
 
 import argparse
+import os
 import time
 import uuid
 import random
@@ -23,10 +25,10 @@ import pandas as pd
 from faker import Faker
 from google.cloud import bigquery
 
-# ---- Config: edit these two for your project ----
-PROJECT_ID = "your-gcp-project-id"
-DATASET_ID = "payments_synthetic"
-TABLE_ID = "raw_transactions"
+# ---- Config: override via env vars, or edit the defaults ----
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "payment-analytics-portfolio")
+DATASET_ID = os.environ.get("BQ_DATASET_ID", "payments_synthetic")
+TABLE_ID = os.environ.get("BQ_TABLE_ID", "raw_transactions")
 
 BATCH_SIZE = 30          # transactions per micro-batch
 BATCH_INTERVAL_SEC = 45  # how often to load a new batch in live mode
@@ -130,14 +132,24 @@ def load_batch(client: bigquery.Client, table_ref: str, rows: list[dict]) -> Non
 
 def backfill(client: bigquery.Client, table_ref: str, hours: int) -> None:
     """Seed historical data so dbt rolling-window models have something to aggregate
-    before the live loop starts producing real-time data."""
+    before the live loop starts producing real-time data.
+
+    Generates data at the same BATCH_INTERVAL_SEC granularity as the live loop
+    (so patterns/timestamps look identical to real ingestion), but flushes to
+    BigQuery once per simulated hour instead of once per micro-batch. This keeps
+    the backfill well under BigQuery's ~1,500-load-jobs-per-table-per-day limit
+    (24h backfill = 24 load jobs, not 1,920)."""
     now = datetime.now(timezone.utc)
-    batches = (hours * 3600) // BATCH_INTERVAL_SEC
-    print(f"Backfilling ~{hours}h of history in {batches} batches...")
-    for b in range(int(batches)):
-        as_of = now - timedelta(seconds=int(b * BATCH_INTERVAL_SEC))
-        rows = generate_batch(BATCH_SIZE, as_of)
-        load_batch(client, table_ref, rows)
+    batches_per_hour = 3600 // BATCH_INTERVAL_SEC
+    print(f"Backfilling ~{hours}h of history in {hours} load jobs "
+          f"({batches_per_hour} micro-batches each)...")
+    for h in range(hours):
+        hour_rows = []
+        for b in range(batches_per_hour):
+            offset_sec = h * 3600 + b * BATCH_INTERVAL_SEC
+            as_of = now - timedelta(seconds=offset_sec)
+            hour_rows.extend(generate_batch(BATCH_SIZE, as_of))
+        load_batch(client, table_ref, hour_rows)
 
 
 def live_loop(client: bigquery.Client, table_ref: str) -> None:
