@@ -6,6 +6,10 @@ profiles.yml
 *.log
 .DS_Store
 
+# Machine-local Claude Code settings. The global gitignore covers the exact
+# name; this also catches the " 2.json" duplicates macOS/cloud sync creates.
+.claude/settings.local*.json
+
 # dbt artifacts (added in Phase 3)
 dbt_project/target/
 dbt_project/logs/

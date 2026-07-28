@@ -179,6 +179,27 @@ models:
                 max_value: 1
                 inclusive: true
 
+  - name: agg_suspicious_hourly
+    description: >
+      Hourly flagging summary. The dashboard polls this instead of the fact
+      table so refresh cost stays constant as history grows.
+    columns:
+      - name: transacted_hour
+        data_tests:
+          - unique
+          - not_null
+      - name: txn_count
+        data_tests:
+          - not_null
+      - name: suspicious_rate
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+
   - name: agg_merchant_daily
     description: Daily per-merchant volume and fraud rollup.
     columns:
