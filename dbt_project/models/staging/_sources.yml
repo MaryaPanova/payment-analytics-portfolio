@@ -1,0 +1,44 @@
+version: 2
+
+sources:
+  - name: payments_synthetic
+    database: payment-analytics-portfolio
+    schema: payments_synthetic
+    description: >
+      Raw landing zone written by synthetic_transaction_generator.py in
+      micro-batches. Left exactly as it lands — all cleaning happens in staging.
+    tables:
+      - name: raw_transactions
+        description: One row per synthetic payment transaction, as loaded.
+        # The generator loads via load_table_from_dataframe, which infers the
+        # schema. `timestamp` lands as STRING (isoformat text), not TIMESTAMP.
+        columns:
+          - name: transaction_id
+            description: UUID for the transaction. Unique in the raw feed.
+            data_tests:
+              - unique
+              - not_null
+          - name: user_id
+            data_tests:
+              - not_null
+          - name: merchant_id
+            data_tests:
+              - not_null
+          - name: amount
+            description: Transaction amount in the row's own `currency`.
+            data_tests:
+              - not_null
+          - name: currency
+            data_tests:
+              - not_null
+          - name: timestamp
+            description: ISO-8601 text, UTC. Cast to TIMESTAMP in staging.
+            data_tests:
+              - not_null
+          - name: is_fraud_synthetic
+            description: >
+              Ground-truth label injected by the generator. Available only
+              because the data is synthetic — used to score the Phase 4
+              flagging logic, never as an input to it.
+            data_tests:
+              - not_null

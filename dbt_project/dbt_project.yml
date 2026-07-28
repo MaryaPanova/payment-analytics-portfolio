@@ -1,0 +1,32 @@
+name: payment_analytics
+version: "1.0.0"
+config-version: 2
+
+profile: payment_analytics
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  payment_analytics:
+    staging:
+      # Views: cheap, always current, and the volumes here are small.
+      +materialized: view
+      +schema: staging
+    marts:
+      +materialized: table
+      +schema: marts
+
+seeds:
+  payment_analytics:
+    fx_rates_to_eur:
+      +column_types:
+        currency: STRING
+        rate_to_eur: NUMERIC
