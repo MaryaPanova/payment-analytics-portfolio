@@ -44,7 +44,7 @@ by_rule as (
     union all
     -- The combined engine targets every pattern, so its "target population" is
     -- all fraud. Null target_pattern selects that branch below.
-    select 'any_rule', null, is_flagged, is_fraud_synthetic, fraud_pattern
+    select 'any_rule', null, is_suspicious, is_fraud_synthetic, fraud_pattern
     from anomalies
 
 ),

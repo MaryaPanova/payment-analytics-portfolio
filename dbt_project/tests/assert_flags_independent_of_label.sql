@@ -15,7 +15,7 @@ with grouped as (
         user_txns_in_window,
         country,
         user_prev_country,
-        user_modal_country,
+        user_home_country,
         seconds_since_user_prev_txn,
         amount_zscore_vs_user,
 

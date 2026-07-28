@@ -1,16 +1,65 @@
 version: 2
 
 models:
+  - name: dim_users
+    description: >
+      One row per user: stable profile attributes and lifetime totals.
+      Rebuilt wholesale each run; in production this would refresh nightly.
+    columns:
+      - name: user_id
+        data_tests:
+          - unique
+          - not_null
+      - name: home_country
+        description: The country this user transacts from most often.
+        data_tests:
+          - not_null
+      - name: lifetime_txn_count
+        data_tests:
+          - not_null
+
+  - name: dim_merchants
+    description: One row per merchant, with category and lifetime totals.
+    columns:
+      - name: merchant_id
+        data_tests:
+          - unique
+          - not_null
+      - name: merchant_category
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["retail", "travel", "food_delivery", "gaming",
+                         "subscriptions", "electronics"]
+
   - name: fct_transactions
     description: >
-      Transaction grain with per-user context (amount z-score, time since the
-      user's previous transaction, previous country). Partitioned by date,
-      clustered by category and country.
+      Central fact of the star schema. One row per transaction, with foreign
+      keys to dim_users and dim_merchants plus the trailing-window features the
+      Phase 4 rules threshold. Partitioned by date, clustered by category and
+      country.
     columns:
       - name: transaction_id
         data_tests:
           - unique
           - not_null
+      - name: user_id
+        description: FK to dim_users.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_users')
+                field: user_id
+      - name: merchant_id
+        description: FK to dim_merchants.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_merchants')
+                field: merchant_id
       - name: amount_eur
         data_tests:
           - not_null
@@ -18,9 +67,23 @@ models:
         data_tests:
           - not_null
       - name: amount_zscore_vs_user
-        description: Std devs from the user's own mean. 0 when undefined.
+        description: >
+          Std devs from the user's TRAILING mean, excluding the current row.
+          Null when the window holds fewer than min_rolling_observations prior
+          transactions — "cannot judge yet" rather than a fabricated zero — so
+          this column is intentionally not tested for not_null.
+      - name: user_rolling_txn_count
+        description: Prior transactions the trailing window saw. Never null.
         data_tests:
           - not_null
+      - name: merchant_txns_per_minute
+        description: Rolling transaction rate for this merchant. At least 1.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
       - name: seconds_since_user_prev_txn
         description: >
           Null for a user's first transaction — that is meaningful, not missing
@@ -55,7 +118,7 @@ models:
         data_tests:
           - unique
           - not_null
-      - name: is_flagged
+      - name: is_suspicious
         data_tests:
           - not_null
       - name: rules_triggered

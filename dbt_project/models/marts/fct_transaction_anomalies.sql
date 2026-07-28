@@ -2,7 +2,7 @@
     config(
         materialized='table',
         partition_by={'field': 'transacted_date', 'data_type': 'date'},
-        cluster_by=['is_flagged', 'merchant_category']
+        cluster_by=['is_suspicious', 'merchant_category']
     )
 }}
 
@@ -53,22 +53,29 @@ flagged as (
         -- Away from the user's established home base, and too soon after their
         -- last transaction for the trip to be real.
         --
-        -- This compares against the user's *modal* country, not their previous
-        -- one. Comparing to the previous country flagged the return trip as
-        -- well as the departure: fraud moves the user abroad, their next
-        -- legitimate transaction moves them back, and both look like a change.
-        -- That produced 1,705 false positives and held geo precision at 0.51.
-        -- A home base is stable, so only the genuine excursion trips it.
+        -- Compares against the user's home country from dim_users, not their
+        -- previous country. Comparing to the previous country flagged the
+        -- return trip as well as the departure: fraud moves the user abroad,
+        -- their next legitimate transaction moves them back, and both look
+        -- like a change. That produced 1,705 false positives and held geo
+        -- precision at 0.51. A home base is stable, so only the genuine
+        -- excursion trips it.
         (
-            country != user_modal_country
+            country != user_home_country
             and coalesce(seconds_since_user_prev_txn, 0)
                 <= {{ var('geo_max_gap_seconds') }}
         ) as flag_geo,
 
         -- One-sided on purpose. An unusually *small* amount is not fraud in
         -- this dataset, so only the upper tail counts.
-        amount_zscore_vs_user >= {{ var('amount_zscore_threshold') }}
-            as flag_amount
+        --
+        -- coalesce to false because amount_zscore_vs_user is null when the
+        -- trailing window holds too little history. Null there means "no
+        -- basis to judge", and no basis to judge is not grounds to flag.
+        coalesce(
+            amount_zscore_vs_user >= {{ var('amount_zscore_threshold') }},
+            false
+        ) as flag_amount
 
     from windowed
 
@@ -81,7 +88,7 @@ select
       + cast(flag_geo as int64)
       + cast(flag_amount as int64)          as rules_triggered,
 
-    (flag_velocity or flag_geo or flag_amount) as is_flagged,
+    (flag_velocity or flag_geo or flag_amount) as is_suspicious,
 
     -- Kept last, and deliberately after the flags, to make it visually obvious
     -- in the output that they play no part in producing them.

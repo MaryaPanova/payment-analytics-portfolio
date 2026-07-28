@@ -30,12 +30,28 @@ vars:
   # Amount: std devs above the user's own mean.
   amount_zscore_threshold: 3.0
 
+  # Trailing window for the per-user amount baseline. Must be a *trailing*
+  # window: scoring a transaction against a mean that includes later
+  # transactions is lookahead bias, and no real-time system could do it.
+  user_rolling_window_seconds: 86400   # 24h
+  # Below this many prior transactions the baseline is too noisy to judge
+  # against, so the z-score is null rather than a made-up number.
+  min_rolling_observations: 10
+
+  # Window for the per-merchant transaction rate (transactions per minute).
+  merchant_rate_window_seconds: 60
+
 models:
   payment_analytics:
     staging:
       # Views: cheap, always current, and the volumes here are small.
       +materialized: view
       +schema: staging
+    intermediate:
+      # Views too — these exist to keep window logic out of the marts, not to
+      # be queried directly.
+      +materialized: view
+      +schema: intermediate
     marts:
       +materialized: table
       +schema: marts
