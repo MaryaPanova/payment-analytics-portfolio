@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: int_user_rolling_amounts
+    description: >
+      Trailing per-user amount baseline at transaction grain. The window
+      excludes the current row and looks only backwards, so nothing computed
+      here depends on transactions that had not happened yet.
+    columns:
+      - name: transaction_id
+        data_tests:
+          - unique
+          - not_null
+      - name: user_rolling_txn_count
+        description: >
+          Prior transactions inside the window. Zero for a user's first
+          transaction, which is correct — there is no history behind it.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: true
+
+  - name: int_merchant_txn_rates
+    description: Rolling transactions-per-minute per merchant, transaction grain.
+    columns:
+      - name: transaction_id
+        data_tests:
+          - unique
+          - not_null
+      - name: merchant_txns_per_minute
+        description: >
+          Includes the current transaction, so it is always at least 1.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true

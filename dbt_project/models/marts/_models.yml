@@ -1,0 +1,196 @@
+version: 2
+
+models:
+  - name: dim_users
+    description: >
+      One row per user: stable profile attributes and lifetime totals.
+      Rebuilt wholesale each run; in production this would refresh nightly.
+    columns:
+      - name: user_id
+        data_tests:
+          - unique
+          - not_null
+      - name: home_country
+        description: The country this user transacts from most often.
+        data_tests:
+          - not_null
+      - name: lifetime_txn_count
+        data_tests:
+          - not_null
+
+  - name: dim_merchants
+    description: One row per merchant, with category and lifetime totals.
+    columns:
+      - name: merchant_id
+        data_tests:
+          - unique
+          - not_null
+      - name: merchant_category
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["retail", "travel", "food_delivery", "gaming",
+                         "subscriptions", "electronics"]
+
+  - name: fct_transactions
+    description: >
+      Central fact of the star schema. One row per transaction, with foreign
+      keys to dim_users and dim_merchants plus the trailing-window features the
+      Phase 4 rules threshold. Partitioned by date, clustered by category and
+      country.
+    columns:
+      - name: transaction_id
+        data_tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: FK to dim_users.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_users')
+                field: user_id
+      - name: merchant_id
+        description: FK to dim_merchants.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_merchants')
+                field: merchant_id
+      - name: amount_eur
+        data_tests:
+          - not_null
+      - name: transacted_at
+        data_tests:
+          - not_null
+      - name: amount_zscore_vs_user
+        description: >
+          Std devs from the user's TRAILING mean, excluding the current row.
+          Null when the window holds fewer than min_rolling_observations prior
+          transactions — "cannot judge yet" rather than a fabricated zero — so
+          this column is intentionally not tested for not_null.
+      - name: user_rolling_txn_count
+        description: Prior transactions the trailing window saw. Never null.
+        data_tests:
+          - not_null
+      - name: merchant_txns_per_minute
+        description: Rolling transaction rate for this merchant. At least 1.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+      - name: seconds_since_user_prev_txn
+        description: >
+          Null for a user's first transaction — that is meaningful, not missing
+          data, so this column is intentionally not tested for not_null.
+
+  - name: agg_transactions_hourly
+    description: Hourly platform metrics; the dashboard's headline time series.
+    columns:
+      - name: transacted_hour
+        data_tests:
+          - unique
+          - not_null
+      - name: txn_count
+        data_tests:
+          - not_null
+      - name: fraud_rate
+        description: fraud_txn_count / txn_count, in [0, 1].
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+
+  - name: fct_transaction_anomalies
+    description: >
+      Transaction grain with rule-based fraud flags. is_fraud_synthetic is
+      carried for scoring only and is not an input to any rule.
+    columns:
+      - name: transaction_id
+        data_tests:
+          - unique
+          - not_null
+      - name: is_suspicious
+        data_tests:
+          - not_null
+      - name: rules_triggered
+        description: How many of the three rules fired (0-3).
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 3
+                inclusive: true
+      - name: user_txns_in_window
+        description: >
+          Transactions by this user within velocity_window_seconds, inclusive
+          of the row itself — so it is always at least 1.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                inclusive: true
+
+  - name: agg_anomaly_performance
+    description: >
+      Precision, recall and F1 per rule, scored against the synthetic label.
+      One row per rule plus a combined any_rule row.
+    columns:
+      - name: rule_name
+        data_tests:
+          - unique
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["velocity", "geo", "amount", "any_rule"]
+      - name: precision_score
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: recall_score
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+      - name: targeted_recall_score
+        description: >
+          Recall against only the pattern this rule targets. The meaningful
+          per-rule number; recall_score is capped near one third by design.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
+
+  - name: agg_merchant_daily
+    description: Daily per-merchant volume and fraud rollup.
+    columns:
+      - name: merchant_id
+        data_tests:
+          - not_null
+      - name: txn_count
+        data_tests:
+          - not_null
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - transacted_date
+              - merchant_id

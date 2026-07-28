@@ -33,8 +33,44 @@ TABLE_ID = os.environ.get("BQ_TABLE_ID", "raw_transactions")
 BATCH_SIZE = 30          # transactions per micro-batch
 BATCH_INTERVAL_SEC = 45  # how often to load a new batch in live mode
 
+# Share of emitted rows carrying is_fraud_synthetic. Real card-present fraud is
+# well under 1%; 4.5% keeps the positive class large enough to evaluate against
+# without making detection trivially easy.
+TARGET_FRAUD_RATE = 0.045
+
+# A velocity "burst" is several transactions from one user in quick succession.
+VELOCITY_BURST_MIN = 5
+VELOCITY_BURST_MAX = 8
+_MEAN_BURST = (VELOCITY_BURST_MIN + VELOCITY_BURST_MAX) / 2
+
 fake = Faker()
 random.seed(42)
+
+
+def _branch_probabilities(target_rate: float) -> tuple[float, float, float]:
+    """Per-iteration trigger probabilities for (velocity, geo, amount).
+
+    These have to be solved for rather than picked by hand. The velocity branch
+    emits a *burst* of ~6.5 rows per trigger while geo and amount emit one each,
+    so giving all three the same probability makes velocity contribute ~6.5x its
+    share. That is exactly what went wrong before: three branches at p=0.015
+    each, documented as "4-5% fraud", actually produced ~12%.
+
+    Solving so that each pattern contributes an equal number of fraud *rows*:
+    let x be the fraud rows per iteration from each of the three patterns, so
+    velocity triggers at x/_MEAN_BURST and the other two at x. Per iteration
+    there are then 3x fraud rows out of 1 + x(1 - 1/_MEAN_BURST) total, and
+
+        3x / (1 + x(1 - 1/m)) = target_rate
+
+    rearranges to the expression below.
+    """
+    m = _MEAN_BURST
+    x = target_rate / (3 - target_rate * (1 - 1 / m))
+    return x / m, x, x
+
+
+P_VELOCITY, P_GEO, P_AMOUNT = _branch_probabilities(TARGET_FRAUD_RATE)
 
 # ---- Synthetic reference data: fixed pools of users & merchants ----
 COUNTRIES = ["DE", "FR", "NL", "ES", "IT", "PL", "PT", "BR", "US", "AE"]
@@ -57,7 +93,9 @@ MERCHANTS = [
 ]
 
 
-def _base_transaction(ts: datetime, user: dict, fraud_flag: bool = False) -> dict:
+def _base_transaction(ts: datetime, user: dict, fraud_pattern: str | None = None) -> dict:
+    """Build one transaction. `fraud_pattern` is the ground-truth label:
+    None for a normal transaction, otherwise which pattern produced it."""
     merchant = random.choice(MERCHANTS)
     country = user["home_country"]
     amount = round(max(1.0, random.gauss(user["avg_amount"], user["avg_amount"] * 0.3)), 2)
@@ -71,44 +109,56 @@ def _base_transaction(ts: datetime, user: dict, fraud_flag: bool = False) -> dic
         "country": country,
         "device": user["home_device"],
         "timestamp": ts.isoformat(),
-        "is_fraud_synthetic": fraud_flag,  # ground truth, for later evaluating your flagging logic
+        # Ground truth, for evaluating the flagging logic — never an input to it.
+        # is_fraud_synthetic answers "was this fraud"; fraud_pattern answers
+        # "which kind", so each rule can be scored against the pattern it
+        # actually targets instead of against all fraud indiscriminately.
+        "is_fraud_synthetic": fraud_pattern is not None,
+        "fraud_pattern": fraud_pattern,
     }
 
 
 def generate_batch(n: int, as_of: datetime) -> list[dict]:
-    """Generate n transactions ending at `as_of`, with ~4-5% injected fraud-like patterns."""
+    """Generate exactly n transactions ending at `as_of`.
+
+    Roughly TARGET_FRAUD_RATE of the returned rows are flagged fraudulent,
+    split about evenly across the three patterns. See _branch_probabilities
+    for why the trigger probabilities are not equal.
+    """
     rows = []
     i = 0
     while i < n:
         roll = random.random()
 
-        if roll < 0.015 and i + 6 < n:
-            # Velocity spike: same user, several transactions within ~90 seconds
+        if roll < P_VELOCITY and i + VELOCITY_BURST_MIN <= n:
+            # Velocity spike: same user, several transactions within ~90 seconds.
+            # Clamped to the remaining room so a batch never overruns n — the
+            # previous version could return up to 2 rows more than requested.
             user = random.choice(USERS)
             burst_start = as_of - timedelta(seconds=random.randint(0, 120))
-            burst_size = random.randint(5, 8)
+            burst_size = min(random.randint(VELOCITY_BURST_MIN, VELOCITY_BURST_MAX), n - i)
             for j in range(burst_size):
                 ts = burst_start + timedelta(seconds=j * random.randint(5, 15))
-                rows.append(_base_transaction(ts, user, fraud_flag=True))
+                rows.append(_base_transaction(ts, user, fraud_pattern="velocity"))
             i += burst_size
 
-        elif roll < 0.03:
+        elif roll < P_VELOCITY + P_GEO:
             # Geo mismatch: transaction from a country far from the user's home country,
             # timestamped implausibly close to a "normal" one
             user = random.choice(USERS)
             ts = as_of - timedelta(seconds=random.randint(0, 300))
-            row = _base_transaction(ts, user, fraud_flag=True)
+            row = _base_transaction(ts, user, fraud_pattern="geo")
             other_countries = [c for c in COUNTRIES if c != user["home_country"]]
             row["country"] = random.choice(other_countries)
             row["currency"] = CURRENCIES[row["country"]]
             rows.append(row)
             i += 1
 
-        elif roll < 0.045:
+        elif roll < P_VELOCITY + P_GEO + P_AMOUNT:
             # Amount outlier: 8-15x this user's normal amount
             user = random.choice(USERS)
             ts = as_of - timedelta(seconds=random.randint(0, 300))
-            row = _base_transaction(ts, user, fraud_flag=True)
+            row = _base_transaction(ts, user, fraud_pattern="amount")
             row["amount"] = round(user["avg_amount"] * random.uniform(8, 15), 2)
             rows.append(row)
             i += 1
@@ -117,7 +167,7 @@ def generate_batch(n: int, as_of: datetime) -> list[dict]:
             # Normal transaction
             user = random.choice(USERS)
             ts = as_of - timedelta(seconds=random.randint(0, 300))
-            rows.append(_base_transaction(ts, user, fraud_flag=False))
+            rows.append(_base_transaction(ts, user, fraud_pattern=None))
             i += 1
 
     return rows
@@ -125,6 +175,11 @@ def generate_batch(n: int, as_of: datetime) -> list[dict]:
 
 def load_batch(client: bigquery.Client, table_ref: str, rows: list[dict]) -> None:
     df = pd.DataFrame(rows)
+    # fraud_pattern is None for every normal transaction, so a batch containing
+    # no fraud gives pandas an all-None object column and BigQuery nothing to
+    # infer a type from. Pinning the dtype makes it land as NULLABLE STRING
+    # regardless of what any single batch happens to contain.
+    df["fraud_pattern"] = df["fraud_pattern"].astype("string")
     job = client.load_table_from_dataframe(df, table_ref)
     job.result()  # wait for the load job to finish
     print(f"[{datetime.now(timezone.utc).isoformat()}] loaded {len(rows)} rows -> {table_ref}")

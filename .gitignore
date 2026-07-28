@@ -9,3 +9,8 @@ profiles.yml
 # dbt artifacts (added in Phase 3)
 dbt_project/target/
 dbt_project/logs/
+dbt_project/dbt_packages/
+dbt_project/.user.yml
+
+# package-lock.yml IS committed on purpose: it pins the resolved dbt_utils
+# version so a fresh `dbt deps` reproduces this build.

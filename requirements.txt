@@ -1,0 +1,17 @@
+# Real-Time Transaction Analytics — Python 3.12
+#
+#   python3.12 -m venv .venv
+#   .venv/bin/pip install -r requirements.txt
+#
+# Versions are pinned to compatible releases so a fresh clone builds the same
+# stack. dbt is held at stable 1.10.x on purpose: 2.0 is still pre-release.
+
+# --- Phases 1-2: synthetic data generation + BigQuery ingestion ---
+Faker~=37.12
+pandas~=2.3
+google-cloud-bigquery~=3.41
+pyarrow~=21.0          # required by load_table_from_dataframe
+
+# --- Phase 3+: dbt models on BigQuery ---
+dbt-core~=1.12.0
+dbt-bigquery~=1.12.0

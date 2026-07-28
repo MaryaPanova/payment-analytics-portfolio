@@ -1,0 +1,20 @@
+# Copy to ~/.dbt/profiles.yml (or dbt_project/profiles.yml) and adjust.
+# The real profiles.yml is gitignored because it points at your GCP project
+# and, depending on method, can reference a keyfile path.
+#
+# `oauth` uses your local gcloud credentials — run this once first:
+#     gcloud auth application-default login
+
+payment_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: bigquery
+      method: oauth
+      project: payment-analytics-portfolio
+      dataset: payments_analytics    # dbt creates payments_analytics_staging / _marts
+      location: europe-west10        # must match payments_synthetic exactly;
+                                     # the EU multi-region is NOT the same place
+      threads: 4
+      timeout_seconds: 300
+      priority: interactive

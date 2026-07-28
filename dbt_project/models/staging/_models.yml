@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: stg_transactions
+    description: >
+      Transaction grain, cleaned. Timestamps cast to real TIMESTAMP and amounts
+      normalised to EUR so they can be summed across countries.
+    columns:
+      - name: transaction_id
+        data_tests:
+          - unique
+          - not_null
+      - name: transacted_at
+        description: Event time, UTC.
+        data_tests:
+          - not_null
+      - name: amount_eur
+        description: >
+          amount_original converted at the static seed rate. The only amount
+          column safe to aggregate.
+        data_tests:
+          # Fails if a currency is missing from fx_rates_to_eur — see the
+          # left join in stg_transactions.sql.
+          - not_null
+      - name: currency
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["EUR", "USD", "PLN", "BRL", "AED"]
+      - name: device
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["ios", "android", "web"]
+      - name: fraud_pattern
+        description: >
+          Which pattern produced the fraud; null for normal transactions, so
+          intentionally not tested for not_null.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["velocity", "geo", "amount"]
+                # Nulls are the normal case here and are not a violation.
+                quote: true
+              config:
+                where: "fraud_pattern is not null"
