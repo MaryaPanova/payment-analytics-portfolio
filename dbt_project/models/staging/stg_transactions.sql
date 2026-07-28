@@ -38,7 +38,11 @@ select
     timestamp_trunc(cast(raw.timestamp as timestamp), hour) as transacted_hour,
     date(cast(raw.timestamp as timestamp))               as transacted_date,
 
-    raw.is_fraud_synthetic
+    raw.is_fraud_synthetic,
+    -- Which pattern generated the fraud ('velocity' / 'geo' / 'amount'), null
+    -- for normal transactions. Lets each rule be scored against the pattern it
+    -- targets rather than against all fraud indiscriminately.
+    raw.fraud_pattern
 
 from raw
 -- Deliberately a LEFT join. An inner join would silently drop transactions in

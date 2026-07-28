@@ -93,7 +93,9 @@ MERCHANTS = [
 ]
 
 
-def _base_transaction(ts: datetime, user: dict, fraud_flag: bool = False) -> dict:
+def _base_transaction(ts: datetime, user: dict, fraud_pattern: str | None = None) -> dict:
+    """Build one transaction. `fraud_pattern` is the ground-truth label:
+    None for a normal transaction, otherwise which pattern produced it."""
     merchant = random.choice(MERCHANTS)
     country = user["home_country"]
     amount = round(max(1.0, random.gauss(user["avg_amount"], user["avg_amount"] * 0.3)), 2)
@@ -107,7 +109,12 @@ def _base_transaction(ts: datetime, user: dict, fraud_flag: bool = False) -> dic
         "country": country,
         "device": user["home_device"],
         "timestamp": ts.isoformat(),
-        "is_fraud_synthetic": fraud_flag,  # ground truth, for later evaluating your flagging logic
+        # Ground truth, for evaluating the flagging logic — never an input to it.
+        # is_fraud_synthetic answers "was this fraud"; fraud_pattern answers
+        # "which kind", so each rule can be scored against the pattern it
+        # actually targets instead of against all fraud indiscriminately.
+        "is_fraud_synthetic": fraud_pattern is not None,
+        "fraud_pattern": fraud_pattern,
     }
 
 
@@ -132,7 +139,7 @@ def generate_batch(n: int, as_of: datetime) -> list[dict]:
             burst_size = min(random.randint(VELOCITY_BURST_MIN, VELOCITY_BURST_MAX), n - i)
             for j in range(burst_size):
                 ts = burst_start + timedelta(seconds=j * random.randint(5, 15))
-                rows.append(_base_transaction(ts, user, fraud_flag=True))
+                rows.append(_base_transaction(ts, user, fraud_pattern="velocity"))
             i += burst_size
 
         elif roll < P_VELOCITY + P_GEO:
@@ -140,7 +147,7 @@ def generate_batch(n: int, as_of: datetime) -> list[dict]:
             # timestamped implausibly close to a "normal" one
             user = random.choice(USERS)
             ts = as_of - timedelta(seconds=random.randint(0, 300))
-            row = _base_transaction(ts, user, fraud_flag=True)
+            row = _base_transaction(ts, user, fraud_pattern="geo")
             other_countries = [c for c in COUNTRIES if c != user["home_country"]]
             row["country"] = random.choice(other_countries)
             row["currency"] = CURRENCIES[row["country"]]
@@ -151,7 +158,7 @@ def generate_batch(n: int, as_of: datetime) -> list[dict]:
             # Amount outlier: 8-15x this user's normal amount
             user = random.choice(USERS)
             ts = as_of - timedelta(seconds=random.randint(0, 300))
-            row = _base_transaction(ts, user, fraud_flag=True)
+            row = _base_transaction(ts, user, fraud_pattern="amount")
             row["amount"] = round(user["avg_amount"] * random.uniform(8, 15), 2)
             rows.append(row)
             i += 1
@@ -160,7 +167,7 @@ def generate_batch(n: int, as_of: datetime) -> list[dict]:
             # Normal transaction
             user = random.choice(USERS)
             ts = as_of - timedelta(seconds=random.randint(0, 300))
-            rows.append(_base_transaction(ts, user, fraud_flag=False))
+            rows.append(_base_transaction(ts, user, fraud_pattern=None))
             i += 1
 
     return rows
@@ -168,6 +175,11 @@ def generate_batch(n: int, as_of: datetime) -> list[dict]:
 
 def load_batch(client: bigquery.Client, table_ref: str, rows: list[dict]) -> None:
     df = pd.DataFrame(rows)
+    # fraud_pattern is None for every normal transaction, so a batch containing
+    # no fraud gives pandas an all-None object column and BigQuery nothing to
+    # infer a type from. Pinning the dtype makes it land as NULLABLE STRING
+    # regardless of what any single batch happens to contain.
+    df["fraud_pattern"] = df["fraud_pattern"].astype("string")
     job = client.load_table_from_dataframe(df, table_ref)
     job.result()  # wait for the load job to finish
     print(f"[{datetime.now(timezone.utc).isoformat()}] loaded {len(rows)} rows -> {table_ref}")

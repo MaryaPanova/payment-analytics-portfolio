@@ -42,3 +42,8 @@ sources:
               flagging logic, never as an input to it.
             data_tests:
               - not_null
+          - name: fraud_pattern
+            description: >
+              Which pattern produced the fraud: velocity, geo or amount. Null
+              for normal transactions. Lets each rule be scored against the
+              pattern it targets. Scoring only, never a rule input.

@@ -15,6 +15,7 @@ with grouped as (
         user_txns_in_window,
         country,
         user_prev_country,
+        user_modal_country,
         seconds_since_user_prev_txn,
         amount_zscore_vs_user,
 
@@ -23,7 +24,7 @@ with grouped as (
         count(distinct cast(flag_amount as string))   as distinct_amount_flags
 
     from {{ ref('fct_transaction_anomalies') }}
-    group by 1, 2, 3, 4, 5
+    group by 1, 2, 3, 4, 5, 6
 
 )
 

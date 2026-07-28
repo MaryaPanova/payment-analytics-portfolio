@@ -50,12 +50,19 @@ flagged as (
         user_txns_in_window >= {{ var('velocity_min_txns') }}
             as flag_velocity,
 
-        -- "Impossible travel": the country changed, and it changed faster than
-        -- anyone could physically move between them.
+        -- Away from the user's established home base, and too soon after their
+        -- last transaction for the trip to be real.
+        --
+        -- This compares against the user's *modal* country, not their previous
+        -- one. Comparing to the previous country flagged the return trip as
+        -- well as the departure: fraud moves the user abroad, their next
+        -- legitimate transaction moves them back, and both look like a change.
+        -- That produced 1,705 false positives and held geo precision at 0.51.
+        -- A home base is stable, so only the genuine excursion trips it.
         (
-            user_prev_country is not null
-            and user_prev_country != country
-            and seconds_since_user_prev_txn <= {{ var('geo_max_gap_seconds') }}
+            country != user_modal_country
+            and coalesce(seconds_since_user_prev_txn, 0)
+                <= {{ var('geo_max_gap_seconds') }}
         ) as flag_geo,
 
         -- One-sided on purpose. An unusually *small* amount is not fraud in
@@ -68,7 +75,7 @@ flagged as (
 )
 
 select
-    * except (is_fraud_synthetic),
+    * except (is_fraud_synthetic, fraud_pattern),
 
     cast(flag_velocity as int64)
       + cast(flag_geo as int64)
@@ -77,7 +84,8 @@ select
     (flag_velocity or flag_geo or flag_amount) as is_flagged,
 
     -- Kept last, and deliberately after the flags, to make it visually obvious
-    -- in the output that it plays no part in producing them.
-    is_fraud_synthetic
+    -- in the output that they play no part in producing them.
+    is_fraud_synthetic,
+    fraud_pattern
 
 from flagged

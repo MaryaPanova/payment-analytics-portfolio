@@ -28,7 +28,13 @@ user_stats as (
     select
         user_id,
         avg(amount_eur)     as user_avg_amount_eur,
-        stddev(amount_eur)  as user_stddev_amount_eur
+        stddev(amount_eur)  as user_stddev_amount_eur,
+
+        -- The country this user transacts from most often — their established
+        -- home base. Derived purely from observed behaviour, so it is available
+        -- on unlabelled production data too.
+        approx_top_count(country, 1)[offset(0)].value as user_modal_country
+
     from txns
     group by user_id
 
@@ -48,8 +54,10 @@ select
     txns.transacted_hour,
     txns.transacted_date,
     txns.is_fraud_synthetic,
+    txns.fraud_pattern,
 
     user_stats.user_avg_amount_eur,
+    user_stats.user_modal_country,
 
     -- How far this transaction sits from the user's own norm, in std devs.
     -- Null-safe: a user with one transaction has no stddev, and a user whose

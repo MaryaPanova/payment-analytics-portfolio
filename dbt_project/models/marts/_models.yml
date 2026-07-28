@@ -104,6 +104,17 @@ models:
                 min_value: 0
                 max_value: 1
                 inclusive: true
+      - name: targeted_recall_score
+        description: >
+          Recall against only the pattern this rule targets. The meaningful
+          per-rule number; recall_score is capped near one third by design.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+                inclusive: true
 
   - name: agg_merchant_daily
     description: Daily per-merchant volume and fraud rollup.
