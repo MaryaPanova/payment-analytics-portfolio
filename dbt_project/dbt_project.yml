@@ -14,6 +14,22 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
+# Phase 4 detection thresholds. Kept as vars so they can be tuned from the
+# command line (dbt build --vars '{amount_zscore_threshold: 4}') without
+# editing SQL — the whole point of a rules engine is that it is tunable.
+vars:
+  # Velocity: how many transactions from one user inside the window before it
+  # looks like a burst. The generator emits bursts of 5-8 within ~90s.
+  velocity_window_seconds: 120
+  velocity_min_txns: 4
+
+  # Geo: a country change is only suspicious if it happened too fast to be
+  # real travel.
+  geo_max_gap_seconds: 3600
+
+  # Amount: std devs above the user's own mean.
+  amount_zscore_threshold: 3.0
+
 models:
   payment_analytics:
     staging:
