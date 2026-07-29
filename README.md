@@ -112,6 +112,9 @@ cp dbt_project/profiles.yml.example dbt_project/profiles.yml   # then edit
 `EU` multi-region is **not** the same place as `europe-west10`, and a mismatch
 fails at query time rather than at connection time.
 
+**→ [USAGE.md](USAGE.md)** covers day-to-day operation, tuning the detection
+thresholds, resetting the data, sandbox limits, and troubleshooting.
+
 ---
 
 ## Scoping choices, and why
